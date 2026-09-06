@@ -33,7 +33,7 @@ are already written in `policy.py`. You are building the thing that uses them.
 
 import re
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
 
 from . import config, llm, policy, retrieval
@@ -99,10 +99,12 @@ class SupportGraph:
         graph = StateGraph(SupportState)
         graph.add_node("lookup", self.node_lookup)
         graph.add_node("retrieve", self.node_retrieve)
+        graph.add_node("act", self.node_act)
         graph.add_node("respond", self.node_respond)
         graph.set_entry_point("lookup")
         graph.add_edge("lookup", "retrieve")
-        graph.add_edge("retrieve", "respond")
+        graph.add_edge("retrieve", "act")
+        graph.add_edge("act", "respond")
         graph.add_edge("respond", END)
         # TODO 6 — build the real flow. Lecture 8. Three parts, in this order:
         #
@@ -168,37 +170,56 @@ class SupportGraph:
 
     # ------------------------------------------------------- TODO 3 and 4 --- #
     def node_act(self, state):
-        """TODO 4 — let the model decide which tools to call. Lecture 7.
+        """Let the model decide which tools to call, then keep looping until it
+        is ready to answer in plain text.
 
-        This is the single most important task. Until it exists your program can
-        look things up only by accident and can never do anything.
-
-        The idea, from sections 2 to 4 of the Lecture 7 notebook:
-
-            model = llm.chat_model().bind_tools(list(self.tools.values()))
-            reply = model.invoke(messages)     # reply.tool_calls says what it wants
-
-        Then run each tool it asked for, put each result back into the message
-        list as a ToolMessage, and go round again. You keep looping while the
-        model is still asking for tools, and stop when it answers in plain text
-        instead. TODO 6 wires up the edge that does the looping.
-
-        Three things the shipped `lookup` step cannot do, and yours must:
-
-          * make a second call that depends on the first — call `get_order`, see
-            that the order exists, and only then call `check_return_eligibility`;
-          * call `get_ticket_history` before troubleshooting, so it can notice the
-            customer has already asked three times;
-          * stop. Use `config.MAX_TOOL_STEPS` as a limit, and decide what the agent
-            says when it hits it. Without a limit a confused model will loop until
-            your credit runs out.
-
-        Things will go wrong and must not crash the run: the model will invent a
-        tool that does not exist, pass the wrong arguments, or call a tool that
-        raises an error. Catch all three and put the problem back into the
-        conversation so the model can try something else.
+        This is the first real step that makes the program an agent instead of a
+        static prompt-and-response pipeline.
         """
-        raise NotImplementedError("TODO 4 — see the docstring")
+        model = llm.chat_model(model=config.TOOL_MODEL).bind_tools(list(self.tools.values()))
+        messages = list(state.get("messages", []))
+
+        # Build a reasonable initial conversation for the model. Most queries come
+        # in as a plain user message, but we keep any earlier system facts from the
+        # lookup node so the tool loop can reason over them too.
+        if not messages:
+            messages = [HumanMessage(content=as_text(state.get("query")))]
+
+        # Keep the tool loop bounded: a confused model should never run forever.
+        for _ in range(config.MAX_TOOL_STEPS):
+            reply = model.invoke(messages)
+            tool_calls = getattr(reply, "tool_calls", None) or []
+            messages.append(reply)
+
+            if not tool_calls:
+                return {"steps": ["act"], "messages": messages}
+
+            for call in tool_calls:
+                tool_name = call.get("name")
+                args = call.get("args") or {}
+                tool = self.tools.get(tool_name)
+                if tool is None:
+                    invalid = (f"Tool {tool_name!r} does not exist. The model must pick "
+                               f"one from the tools list.")
+                    messages.append(ToolMessage(content=invalid,
+                                                tool_call_id=call.get("id", "missing"),
+                                                name=tool_name))
+                    continue
+
+                try:
+                    result = tool.invoke(args)
+                except Exception as exc:  # noqa: BLE001
+                    result = f"Tool error for {tool_name}: {type(exc).__name__}: {exc}"
+
+                messages.append(ToolMessage(content=str(result),
+                                            tool_call_id=call.get("id", "missing"),
+                                            name=tool_name))
+
+        messages.append(AIMessage(content=(
+            "I hit the tool-step limit. I need one more piece of information or a "
+            "human decision before I can continue."
+        )))
+        return {"steps": ["act"], "messages": messages}
 
     def node_verify(self, state):
         """TODO 3 — check the answer is actually supported before sending it. Lecture 6.

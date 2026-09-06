@@ -25,6 +25,79 @@ from support_agent.agent import SupportAgent  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 DEV_Q = ROOT / "data" / "dev_queries.jsonl"
 DEV_G = ROOT / "data" / "dev_gold.jsonl"
+TRACKER = ROOT / "comparison_tracker.md"
+
+
+def _extract_tracker_baseline():
+    """Read the saved baseline values from comparison_tracker.md if present."""
+    if not TRACKER.exists():
+        return {}
+    text = TRACKER.read_text(encoding="utf-8")
+    baseline = {}
+    for line in text.splitlines():
+        if not line.startswith("|") or "Before" in line or "---" in line:
+            continue
+        parts = [p.strip() for p in line.strip("|").split("|")]
+        if len(parts) < 4:
+            continue
+        metric = parts[0]
+        if metric in {"Metric", "system_score", "route", "actions", "facts", "citations"}:
+            try:
+                baseline[metric] = float(parts[1])
+            except ValueError:
+                pass
+    return baseline
+
+
+def update_tracker(report):
+    """Refresh the markdown tracker with the newest evaluation numbers."""
+    if not TRACKER.exists():
+        return
+    baseline = _extract_tracker_baseline()
+    current = {
+        "system_score": report["system_score"],
+        "route": report["components"]["route"],
+        "actions": report["components"]["actions"],
+        "facts": report["components"]["facts"],
+        "citations": report["components"]["citations"],
+    }
+    lines = [
+        "# Before vs After Comparison Tracker",
+        "",
+        "Use this file to record your baseline and then update it after each improvement.",
+        "",
+        "## Baseline from current report.json",
+        "",
+        "| Metric | Before | After | Delta |",
+        "|---|---:|---:|---:|",
+    ]
+    for metric in ["system_score", "route", "actions", "facts", "citations"]:
+        before = baseline.get(metric, current[metric])
+        after = current[metric]
+        delta = after - before
+        lines.append(f"| {metric} | {before} | {after} | {delta:+.4f} |")
+    lines.extend([
+        "",
+        "## How to update it",
+        "",
+        "1. Run the evaluation:",
+        "   ```bash",
+        "   python scripts/evaluate_dev.py --json report.json",
+        "   ```",
+        "2. Copy the new values from `report.json` into the `After` column.",
+        "3. Calculate delta as:",
+        "   ```text",
+        "   after - before",
+        "   ```",
+        "4. Keep one row per milestone or change set.",
+        "",
+        "## Notes",
+        "",
+        "- This is the easiest way to track whether a change actually improved the agent.",
+        "- Keep the baseline values unchanged until you intentionally start a new milestone.",
+        "- Use the same command after every major code change.",
+    ])
+    TRACKER.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def retrieval_only(queries, golds):
@@ -91,6 +164,7 @@ def main():
     if a.json:
         Path(a.json).write_text(json.dumps(report, indent=2))
         print(f"\nfull report -> {a.json}")
+    update_tracker(report)
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ class ToolContext:
     """Per-conversation scratchpad shared by every tool call."""
 
     def __init__(self, customer_id=None, records=None, retriever=None):
-        self.records = records or get_records()``
+        self.records = records or get_records()
         self.retriever = retriever or retrieval.get_retriever()
         self.customer_id = customer_id
         self.actions = []        # [{tool, args, status, result?, reason?}]
