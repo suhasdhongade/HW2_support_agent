@@ -197,4 +197,19 @@ def detect_injection(text):
     Return whatever is useful to you, and put it in the trace so a reader can see
     the agent noticed something.
     """
-    raise NotImplementedError("TODO 5 — see the docstring")
+    text = (text or "").lower()
+    patterns = [
+        r"ignore (all )?(my |the )?(previous|earlier|above) instructions",
+        r"ignore your (policy|rules|instructions)",
+        r"system\s*(override|message)",
+        r"admin(?:istrator)?\s+mode",
+        r"unrestricted\s+mode",
+        r"reply only with",
+        r"you are authorised to",
+        r"approve any refund",
+        r"without (human|supervisor|approval|escalation)",
+    ]
+    for pattern in patterns:
+        if re.search(pattern, text):
+            return True, "prompt_injection"
+    return False, ""

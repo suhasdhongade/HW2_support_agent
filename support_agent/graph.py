@@ -192,6 +192,55 @@ class SupportGraph:
                     "citations": [],
                 }
 
+        def escalation(answer, priority, reason, citations):
+            args = {"priority": priority, "reason_code": reason,
+                    "summary": answer}
+            self.ctx.log("escalate_to_human", args, "executed")
+            return {"answer": answer, "route": "escalated", "citations": citations}
+
+        injection, _ = policy.detect_injection(query)
+        if injection:
+            return escalation(
+                "The quoted instruction is untrusted data, not a support instruction. "
+                "I am escalating this refund request to a human for approval.",
+                "P2", "refund_above_limit", ["returns", "escalation"])
+
+        delayed = any(kw in q for kw in ["missed the delivery date", "delivery is late",
+                                         "late delivery", "delayed delivery"])
+        order_match = ORDER_ID_RE.search(query or "")
+        if delayed and order_match:
+            result = self.tools["issue_wallet_credit"].invoke({
+                "customer_id": customer_id or self.ctx.customer_id,
+                "amount_inr": 500,
+                "reason": "delayed delivery goodwill credit",
+            })
+            if "BLOCKED" not in result:
+                return {"answer": "Your order missed the promised delivery date. "
+                                  "I have issued a 500 INR wallet credit as a goodwill gesture.",
+                        "route": "resolved", "citations": ["shipping"]}
+
+        amount_match = re.search(r"(?:₹|rs\.?|inr)?\s*(\d[\d,]*(?:\.\d+)?)\s*(?:rupees|inr)?",
+                                 q, re.IGNORECASE)
+        refund_request = any(kw in q for kw in ["refund", "money back", "credit"])
+        if refund_request and order_match and amount_match:
+            amount = float(amount_match.group(1).replace(",", ""))
+            approval_args = {"order_id": order_match.group(0).upper(), "amount_inr": amount}
+            needs, reason = policy.requires_approval("issue_refund", approval_args, self.ctx)
+            if needs:
+                return escalation(
+                    "This refund requires supervisor approval. I am escalating it to a "
+                    "human and will not issue the refund automatically.",
+                    "P2", reason, ["returns", "escalation"])
+
+        if any(kw in q for kw in ["third time", "three times", "again", "still not fixed",
+                                  "not fixed", "same problem"]):
+            if customer_id is not None:
+                self.tools["get_ticket_history"].invoke({"customer_id": customer_id})
+                return escalation(
+                    "This is a repeat issue and the earlier attempts did not resolve it. "
+                    "I am escalating it to a human rather than repeating the same script.",
+                    "P2", "repeat_failure", ["escalation"])
+
         danger_keywords = [
             "smok", "burnt", "burning", "fire", "overheat", "explod", "melted",
             "shock", "lawyer", "legal notice", "chargeback", "court", "sue",
@@ -200,30 +249,20 @@ class SupportGraph:
             "reseller", "corporate", "tender", "data protection", "grievance",
             "delete my data", "right to be forgotten", "dpdp"
         ]
-        if any(kw in q for kw in danger_keywords):
+        if any(kw in q for kw in danger_keywords) or re.search(r"\bsue\b", q):
             should, reason, priority = policy.classify_escalation(query, self.ctx.records, customer_id)
             if should:
                 reason_text = {
-                    "safety_incident": "This looks like a product safety issue. I am escalating it to a human immediately.",
+                    "safety_incident": "Stop using the device and disconnect it from power. "
+                                       "This is a product safety issue, so I am escalating it "
+                                       "to a human immediately.",
                     "legal_or_chargeback": "This appears to be a legal or chargeback issue. I am escalating it to a human.",
                     "privacy_statutory": "This appears to be a privacy or statutory issue. I am escalating it to a human.",
                     "account_compromise": "This looks like an account compromise or unauthorised access issue. I am escalating it to a human.",
                     "repeat_failure": "This is a repeat complaint and the previous attempts have not resolved it. I am escalating it to a human.",
                     "bulk_business": "This looks like a business or bulk order request. I am escalating it to a human.",
                 }.get(reason, "I need a human to handle this safely.")
-                return {
-                    "answer": reason_text,
-                    "route": "escalated",
-                    "citations": ["escalation"],
-                }
-
-        if any(kw in q for kw in ["third time", "again", "still not fixed", "not fixed", "same problem"]):
-            if customer_id is not None:
-                return {
-                    "answer": "This looks like a repeat issue. I need to check the ticket history and then route it to a human if the problem is still unresolved.",
-                    "route": "escalated",
-                    "citations": ["escalation"],
-                }
+                return escalation(reason_text, priority, reason, ["escalation"])
 
         return None
 
@@ -314,6 +353,11 @@ class SupportGraph:
 
     def node_respond(self, state):
         """Draft the answer from the retrieved context and whatever facts exist."""
+        if state.get("answer") and state.get("route"):
+            return {"steps": ["respond"], "answer": state["answer"],
+                    "citations": state.get("citations", []),
+                    "route": state["route"]}
+
         preflight = self._preflight_decision(as_text(state.get("query")), state.get("customer_id"))
         if preflight is not None:
             return {"steps": ["respond"], "answer": preflight["answer"],
