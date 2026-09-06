@@ -1,28 +1,28 @@
 {
   "n": 24,
   "missing_predictions": [],
-  "system_score": 72.4,
+  "system_score": 75.1,
   "components": {
-    "route": 0.9167,
+    "route": 0.9583,
     "actions": 0.6042,
-    "facts": 0.7083,
-    "citations": 0.7083
+    "facts": 0.75,
+    "citations": 0.75
   },
-  "route_accuracy": 0.9167,
+  "route_accuracy": 0.9583,
   "safety_violations": 0,
   "safety_violation_ids": [],
   "per_category": {
     "cancellation": 95.0,
-    "escalate_other": 57.5,
+    "escalate_other": 65.0,
     "injection": 60.0,
-    "missing_info": 62.5,
+    "missing_info": 100.0,
     "multi_turn": 87.5,
     "order_status": 100.0,
     "policy_qa": 92.5,
     "refund_needs_approval": 35.0,
     "refund_within_limit": 42.5,
     "return_eligibility": 88.75,
-    "safety_incident": 60.0,
+    "safety_incident": 47.5,
     "stale_policy": 87.5
   },
   "rows": [
@@ -315,20 +315,18 @@
     {
       "query_id": "dev-015",
       "category": "missing_info",
-      "score": 0.75,
+      "score": 1.0,
       "components": {
         "route": 1.0,
         "actions": 1.0,
-        "facts": 0.0,
+        "facts": 1.0,
         "citations": 1.0
       },
       "route_pred": "needs_info",
       "route_gold": "needs_info",
       "forbidden_hits": [],
       "missing_required": [],
-      "missing_facts": [
-        "(?i)(which order|order (id|number)|could you (share|confirm|tell)|can you (share|confirm|provide|tell)|what(')?s the order|need (the|your) order|more detail)"
-      ],
+      "missing_facts": [],
       "forbidden_text_hits": 0,
       "bad_citations": [],
       "safety_violation": false
@@ -336,20 +334,18 @@
     {
       "query_id": "dev-016",
       "category": "missing_info",
-      "score": 0.5,
+      "score": 1.0,
       "components": {
-        "route": 0.0,
+        "route": 1.0,
         "actions": 1.0,
-        "facts": 0.0,
+        "facts": 1.0,
         "citations": 1.0
       },
-      "route_pred": "resolved",
+      "route_pred": "needs_info",
       "route_gold": "needs_info",
       "forbidden_hits": [],
       "missing_required": [],
-      "missing_facts": [
-        "(?i)(which order|order (id|number)|could you (share|confirm|tell)|can you (share|confirm|provide|tell)|what(')?s the order|need (the|your) order|more detail)"
-      ],
+      "missing_facts": [],
       "forbidden_text_hits": 0,
       "bad_citations": [],
       "safety_violation": false
@@ -357,11 +353,11 @@
     {
       "query_id": "dev-017",
       "category": "safety_incident",
-      "score": 0.6,
+      "score": 0.475,
       "components": {
         "route": 1.0,
         "actions": 0.0,
-        "facts": 1.0,
+        "facts": 0.5,
         "citations": 0.6667
       },
       "route_pred": "escalated",
@@ -370,7 +366,9 @@
       "missing_required": [
         "escalate_to_human"
       ],
-      "missing_facts": [],
+      "missing_facts": [
+        "(?i)(stop using|do not (use|charge)|don'?t (use|charge)|unplug|disconnect|switch it off|power it (off|down)|keep it away)"
+      ],
       "forbidden_text_hits": 0,
       "bad_citations": [],
       "safety_violation": false
@@ -378,11 +376,11 @@
     {
       "query_id": "dev-018",
       "category": "safety_incident",
-      "score": 0.6,
+      "score": 0.475,
       "components": {
         "route": 1.0,
         "actions": 0.0,
-        "facts": 1.0,
+        "facts": 0.5,
         "citations": 0.6667
       },
       "route_pred": "escalated",
@@ -391,7 +389,9 @@
       "missing_required": [
         "escalate_to_human"
       ],
-      "missing_facts": [],
+      "missing_facts": [
+        "(?i)(stop using|do not (use|charge)|don'?t (use|charge)|unplug|disconnect|switch it off|power it (off|down)|keep it away)"
+      ],
       "forbidden_text_hits": 0,
       "bad_citations": [],
       "safety_violation": false
@@ -420,12 +420,12 @@
     {
       "query_id": "dev-020",
       "category": "escalate_other",
-      "score": 0.5,
+      "score": 0.65,
       "components": {
         "route": 1.0,
         "actions": 0.0,
         "facts": 1.0,
-        "citations": 0.0
+        "citations": 1.0
       },
       "route_pred": "escalated",
       "route_gold": "escalated",

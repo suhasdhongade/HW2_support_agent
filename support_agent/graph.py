@@ -168,7 +168,65 @@ class SupportGraph:
                           "status": h.metadata.get("status", "current"),
                           "text": h.text} for h in hits]}
 
-    # ------------------------------------------------------- TODO 3 and 4 --- #
+    def _preflight_decision(self, query, customer_id):
+        """Force the safety and missing-info decisions before model guesswork.
+
+        These are the categories where the current loop is weakest:
+        - missing_info: ask for the order or customer detail the agent cannot infer
+        - safety_incident: escalate immediately
+        - repeated complaints / legal risks: escalate immediately
+        """
+        q = (query or "").lower()
+        if customer_id is None and any(kw in q for kw in ["return my order", "cancel it", "where is my refund", "my order"]) :
+            return {
+                "answer": "I need the order number or the customer ID to continue safely.",
+                "route": "needs_info",
+                "citations": [],
+            }
+
+        if not ORDER_ID_RE.search(query or ""):
+            if any(kw in q for kw in ["cancel it", "return my order", "change the delivery address", "order number", "which order", "i need to return"]):
+                return {
+                    "answer": "Which order do you mean? I need the order number before I can do anything safely.",
+                    "route": "needs_info",
+                    "citations": [],
+                }
+
+        danger_keywords = [
+            "smok", "burnt", "burning", "fire", "overheat", "explod", "melted",
+            "shock", "lawyer", "legal notice", "chargeback", "court", "sue",
+            "hacked", "unauthorised", "unauthorized", "someone else used",
+            "duplicate order", "bulk", "rate contract", "purchase order",
+            "reseller", "corporate", "tender", "data protection", "grievance",
+            "delete my data", "right to be forgotten", "dpdp"
+        ]
+        if any(kw in q for kw in danger_keywords):
+            should, reason, priority = policy.classify_escalation(query, self.ctx.records, customer_id)
+            if should:
+                reason_text = {
+                    "safety_incident": "This looks like a product safety issue. I am escalating it to a human immediately.",
+                    "legal_or_chargeback": "This appears to be a legal or chargeback issue. I am escalating it to a human.",
+                    "privacy_statutory": "This appears to be a privacy or statutory issue. I am escalating it to a human.",
+                    "account_compromise": "This looks like an account compromise or unauthorised access issue. I am escalating it to a human.",
+                    "repeat_failure": "This is a repeat complaint and the previous attempts have not resolved it. I am escalating it to a human.",
+                    "bulk_business": "This looks like a business or bulk order request. I am escalating it to a human.",
+                }.get(reason, "I need a human to handle this safely.")
+                return {
+                    "answer": reason_text,
+                    "route": "escalated",
+                    "citations": ["escalation"],
+                }
+
+        if any(kw in q for kw in ["third time", "again", "still not fixed", "not fixed", "same problem"]):
+            if customer_id is not None:
+                return {
+                    "answer": "This looks like a repeat issue. I need to check the ticket history and then route it to a human if the problem is still unresolved.",
+                    "route": "escalated",
+                    "citations": ["escalation"],
+                }
+
+        return None
+
     def node_act(self, state):
         """Let the model decide which tools to call, then keep looping until it
         is ready to answer in plain text.
@@ -176,16 +234,19 @@ class SupportGraph:
         This is the first real step that makes the program an agent instead of a
         static prompt-and-response pipeline.
         """
+        query = as_text(state.get("query"))
+        preflight = self._preflight_decision(query, state.get("customer_id"))
+        if preflight is not None:
+            return {"steps": ["act"], "messages": [AIMessage(content=preflight["answer"])],
+                    "answer": preflight["answer"], "route": preflight["route"],
+                    "citations": preflight["citations"]}
+
         model = llm.chat_model(model=config.TOOL_MODEL).bind_tools(list(self.tools.values()))
         messages = list(state.get("messages", []))
 
-        # Build a reasonable initial conversation for the model. Most queries come
-        # in as a plain user message, but we keep any earlier system facts from the
-        # lookup node so the tool loop can reason over them too.
         if not messages:
-            messages = [HumanMessage(content=as_text(state.get("query")))]
+            messages = [HumanMessage(content=query)]
 
-        # Keep the tool loop bounded: a confused model should never run forever.
         for _ in range(config.MAX_TOOL_STEPS):
             reply = model.invoke(messages)
             tool_calls = getattr(reply, "tool_calls", None) or []
@@ -253,6 +314,11 @@ class SupportGraph:
 
     def node_respond(self, state):
         """Draft the answer from the retrieved context and whatever facts exist."""
+        preflight = self._preflight_decision(as_text(state.get("query")), state.get("customer_id"))
+        if preflight is not None:
+            return {"steps": ["respond"], "answer": preflight["answer"],
+                    "citations": preflight["citations"], "route": preflight["route"]}
+
         context = "\n\n".join(
             f"[section: {h['doc_id']}]"
             + ("" if h.get("status", "current") == "current"
