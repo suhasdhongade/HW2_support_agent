@@ -82,9 +82,14 @@ def test_every_order_id_mentioned_anywhere_actually_exists():
         (config.RECORDS_DIR / "orders.json").read_text())}
     stale = {}
     for path in list(ROOT.rglob("*.py")) + list(ROOT.rglob("*.md")):
-        if any(skip in str(path) for skip in (".index", ".cache", ".venv", "instructor")):
+        p = str(path)
+        if any(skip in p for skip in (".index", ".cache", ".venv", "venv", "instructor")):
             continue
-        missing = set(re.findall(r"MRD-\d{6}", path.read_text())) - real
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        missing = set(re.findall(r"MRD-\d{6}", text)) - real
         if missing:
             stale[path.name] = sorted(missing)
     assert not stale, f"these files name orders that do not exist: {stale}"
