@@ -9,10 +9,13 @@ the rest. You wrote all of it in the Lecture 6 notebook, so this is mostly copyi
 your own code across and then measuring whether it actually helps here.
 """
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 
 from . import config, index, llm
+
+from rank_bm25 import BM25Okapi
 
 
 @dataclass
@@ -67,7 +70,28 @@ class Retriever:
 
         Return a list of `Hit` objects, same as `dense`, so the two can be merged.
         """
-        raise NotImplementedError("TODO 2a — see the docstring")
+        k = k or config.CANDIDATE_K
+        if self._bm25 is None:
+            tokenized = [self._tokenize(chunk.text) for chunk in self.chunks]
+            self._bm25 = BM25Okapi(tokenized)
+
+        query_tokens = self._tokenize(query)
+        if not query_tokens:
+            return []
+
+        scores = self._bm25.get_scores(query_tokens)
+        ranked = sorted(enumerate(scores), key=lambda item: item[1], reverse=True)
+        return [self._hit(self.chunks[i], float(score))
+                for i, score in ranked[:min(k, len(ranked))]]
+
+    @staticmethod
+    def _tokenize(text):
+        """Keep identifiers searchable even when punctuation differs.
+
+        Splitting `ERR-4021` into `err` and `4021` also lets a query written as
+        `ERR 4021` find the same handbook passage.
+        """
+        return re.findall(r"[a-z0-9]+", (text or "").lower())
 
     def rrf(self, *rankings, k=None, top=None):
         """TODO 2b — merge two lists of results. From Lecture 6, "RRF".
@@ -89,7 +113,24 @@ class Retriever:
 
         Accepts any number of ranked lists. Returns one merged list of `Hit`s.
         """
-        raise NotImplementedError("TODO 2b — see the docstring")
+        rrf_k = config.RRF_K if k is None else k
+        scores = defaultdict(float)
+        representatives = {}
+
+        for ranking in rankings:
+            for rank, hit in enumerate(ranking, start=1):
+                scores[hit.chunk_id] += 1.0 / (rrf_k + rank)
+                representatives.setdefault(hit.chunk_id, hit)
+
+        ordered = sorted(scores, key=lambda chunk_id: scores[chunk_id], reverse=True)
+        limit = len(ordered) if top is None else top
+        return [Hit(chunk_id=chunk_id,
+                    doc_id=representatives[chunk_id].doc_id,
+                    title=representatives[chunk_id].title,
+                    text=representatives[chunk_id].text,
+                    score=scores[chunk_id],
+                    metadata=dict(representatives[chunk_id].metadata))
+                for chunk_id in ordered[:limit]]
 
     def hybrid(self, query, k=None):
         """TODO 2c — put 2a and 2b together: run both searches, merge with rrf().
@@ -104,7 +145,9 @@ class Retriever:
         it gained 0.02, so I did not use it" is a good answer and earns marks.
         Claiming it helped without a number does not.
         """
-        raise NotImplementedError("TODO 2c — see the docstring")
+        k = k or config.CANDIDATE_K
+        return self.rrf(self.dense(query, k), self.lexical(query, k),
+                k=config.RRF_K, top=k)
 
     # ------------------------------------------------------------- optional --
     def rerank(self, query, candidates, top_n=None):
@@ -175,7 +218,11 @@ class Retriever:
         Every piece carries `status` and `trust` in `.metadata`, and the two names
         are in `config.UNTRUSTED_DOCS` and `config.SUPERSEDED_DOCS`.
         """
-        return hits
+        blocked = config.UNTRUSTED_DOCS | config.SUPERSEDED_DOCS
+        return [hit for hit in hits
+            if hit.doc_id not in blocked
+            and hit.metadata.get("trust", "official") != "low"
+            and hit.metadata.get("status", "current") != "superseded"]
 
 
 _RETRIEVER = None
