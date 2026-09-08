@@ -145,7 +145,73 @@ def split_structured(sections, size, overlap):
 
     Return the same thing split_fixed returns: a list of (section, text) pairs.
     """
-    raise NotImplementedError("TODO 1 — see the docstring")
+    if size <= overlap:
+        raise ValueError("CHUNK_SIZE must exceed CHUNK_OVERLAP")
+
+    def split_long(text, separators):
+        """Split text with the most meaningful boundary still available."""
+        text = text.strip()
+        if not text:
+            return []
+        if len(text) <= size:
+            return [text]
+        if not separators:
+            pieces = []
+            start = 0
+            while start < len(text):
+                end = min(start + size, len(text))
+                piece = text[start:end].strip()
+                if piece:
+                    pieces.append(piece)
+                start = end
+            return pieces
+
+        separator = separators[0]
+        split_flags = re.MULTILINE if separator.startswith(r"(?=^###") else 0
+        parts = [part.strip() for part in re.split(separator, text, flags=split_flags)
+             if part.strip()]
+        if len(parts) <= 1:
+            return split_long(text, separators[1:])
+
+        groups, current = [], ""
+        for part in parts:
+            candidate = f"{current}\n\n{part}" if current else part
+            if len(candidate) <= size:
+                current = candidate
+            else:
+                if current:
+                    groups.append(current)
+                current = part
+        if current:
+            groups.append(current)
+
+        result = []
+        for group in groups:
+            if len(group) <= size:
+                result.append(group)
+            else:
+                result.extend(split_long(group, separators[1:]))
+        return result
+
+    pieces = []
+    separators = [r"(?=^###\s+)", r"\n\s*\n", r"(?<=[.!?])\s+"]
+    for section in sections:
+        title_prefix = f"{section.title}\n\n"
+        for piece in split_long(section.text, separators):
+            # Repeat the section title so short tables or fragments retain their
+            # topic when embedded independently from the rest of the section.
+            with_title = title_prefix + piece
+            if len(with_title) <= size:
+                pieces.append((section, with_title))
+                continue
+
+            # A very long first fragment may leave no room for the title. Keep
+            # ownership correct and use the hard fallback without crossing sections.
+            for start in range(0, len(piece), max(1, size - len(title_prefix))):
+                fragment = piece[start:start + max(1, size - len(title_prefix))].strip()
+                if fragment:
+                    pieces.append((section, title_prefix + fragment))
+    return pieces
 
 
 def chunk_documents(sections, size=None, overlap=None, strategy="fixed"):

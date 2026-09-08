@@ -6,10 +6,10 @@ Use this file to record your baseline and then update it after each improvement.
 
 | Metric | Before | After | Delta |
 |---|---:|---:|---:|
-| system_score | 70.31 | 95.52 | +25.2100 |
+| system_score | 70.31 | 91.88 | +21.5700 |
 | route | 0.875 | 1.0 | +0.1250 |
 | actions | 0.6042 | 0.9792 | +0.3750 |
-| facts | 0.6667 | 0.9167 | +0.2500 |
+| facts | 0.6667 | 0.7708 | +0.1041 |
 | citations | 0.7083 | 0.8889 | +0.1806 |
 
 ## How to update it
